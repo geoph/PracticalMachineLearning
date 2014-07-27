@@ -1,0 +1,165 @@
+---
+title: "Practical Machine Learning Course Project"
+author: "geoph"
+date: "Sunday, July 27, 2014"
+output: html_document
+
+---
+
+### Load Data
+```{r}
+library(caret)
+set.seed(123)
+
+# Load train and test csv files:
+training  <- read.csv("E:/Google Drive/Practical Machine Learning Project/Final/pml-training.csv", na.strings=c("NA","","#DIV/0!","NULL"))
+dim(training)
+summary(training)
+
+testing <- read.csv("E:/Google Drive/Practical Machine Learning Project/Final/pml-testing.csv", na.strings=c("NA","","#DIV/0!","NULL"))
+
+```
+
+### Find and remove predictors where variance is near to zero
+```{r}
+nsv <- nearZeroVar(training,saveMetrics=TRUE)
+zero.Var.Predictors <- nsv[nsv[,"zeroVar"] == TRUE,]
+
+# Remove predictors with zero variance in both training and the testing sets
+dropColumns <- names(training) %in% row.names(zero.Var.Predictors)
+trainingData <- training[,!dropColumns]
+testingData <- testing[,!dropColumns]
+```
+
+
+
+### Clean and Tidy data
+
+```{r}
+
+# We will ignore the variables with large number of NAs and time variables so as to create a tidy dataset
+TidyDataset = function(data){
+  # Cleaning the data and remove columns that not contribute to prediction:
+  is.NA.columns <- apply(data, 2, function(x) { sum(is.na(x)) })
+  
+  tidyData <- subset(data[, which(is.NA.columns == 0)], 
+                     select=-c(X, user_name, raw_timestamp_part_1, raw_timestamp_part_2, cvtd_timestamp, new_window, num_window))
+}
+
+training_dataset <- TidyDataset(trainingData)
+
+# Final dimension of training dataset
+dim(training_dataset)
+
+testing_dataset <- TidyDataset(testingData)
+
+# Final dimension of testing dataset
+dim(testing_dataset)
+```
+
+## Model Building
+
+We split the training data in a train and test set to validate our model. We will use 5 folds for cross-validation. In random forests the test set error is estimated internally, during the run.  
+
+```{r}
+# 70% of the original training data will be used to train the model
+inTrain = createDataPartition(training_dataset$classe, p=0.7, list=FALSE)
+trainingSet <- training_dataset[inTrain,]
+
+# The remaining 30% will be used to test the model
+testingSet <- training_dataset[-inTrain,]
+```
+
+### Cross validation error estimation
+```{r}
+cvFolds <- 5
+```
+We Use cross-validation with `r cvFolds` folds. The 'classe' variable is the outcome, the attribute we want to predict.
+
+```{r, results='hide'}
+# RandomForest
+trControl <- trainControl(method="cv", number=cvFolds, verboseIter=T)
+modelFit <- train(classe ~., data=trainingSet, method="rf", trControl=trControl,allowParallel=TRUE)
+```
+
+```{r}
+# Model summary
+modelFit
+# Final model
+modelFit$finalModel
+```
+
+From the confusion matrix above, the final model has high accuracy on the training set. 
+
+### In Sample Error
+
+```{r}
+# In Sample Error
+predictions <- predict(modelFit, newdata=trainingSet)
+inSampleError <- sum(predictions != trainingSet$classe) * 100 / nrow(trainingSet)
+```
+
+The In Sample error is `r inSampleError`%
+
+### Evaluate the prediction model
+
+```{r}
+# Test the model with a test set
+predictions <- predict(modelFit, newdata=testingSet)
+```
+```{r, echo=FALSE, results='hide'}
+predictions
+```
+
+The confusion matrix shows high accuracy on the test set.
+
+```{r}
+confusionMatrix(predictions,testingSet$classe)
+```
+
+### Out of Sample Error
+
+```{r}
+outOfSampleError <- sum(predictions != testingSet$classe) * 100 / nrow(testingSet)
+```
+
+The Out of Sample error is `r outOfSampleError`%
+
+```{r, echo=FALSE, results='hide'}
+importance(modelFit$finalModel)
+
+summary(modelFit)
+```
+
+## Figures
+
+The figure below shows the importance measures for the top 15 attributes, in decreasing order of importance.
+
+```{r, echo=FALSE}
+varImpPlot(modelFit$finalModel, sort=TRUE, n.var=25, main="Importance for top 15 attributes", col="blue", pch=20)
+```
+
+The next plot shows the error rates vs number of trees.
+
+```{r, echo=FALSE}
+plot(modelFit$finalModel, log="y", main="Error rates vs number of trees")
+```
+## Prediction
+
+```{r}
+predictions <- predict(modelFit, newdata=testing_dataset)
+predictions
+```
+
+```{r, echo=FALSE, results='hide'}
+
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+
+pml_write_files(predictions)
+```
